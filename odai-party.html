@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>大喜利パーティー</title>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+:root{--bg:#fff8e7;--fg:#222;--card:#fff;--ac:#ff5a5f;--ac2:#ffb400}
+@media(prefers-color-scheme:dark){:root{--bg:#1b1b2f;--fg:#f3f3f3;--card:#2a2a45}}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,"Hiragino Sans",Meiryo,sans-serif;background:var(--bg);color:var(--fg);padding:16px;text-align:center}
+#app{max-width:900px;margin:0 auto}
+h1{font-size:2rem;margin:.4em 0}.big{font-size:2.2rem;font-weight:800;margin:.5em 0}
+button{font:inherit;font-weight:700;background:var(--ac);color:#fff;border:0;border-radius:12px;padding:12px 22px;margin:6px;cursor:pointer}
+button.sub{background:var(--ac2);color:#222}button:disabled{opacity:.4}
+input,textarea{font:inherit;width:100%;padding:12px;border-radius:10px;border:2px solid #aaa;margin:6px 0;background:var(--card);color:var(--fg)}
+.card{background:var(--card);border-radius:14px;padding:14px;margin:8px 0;box-shadow:0 2px 6px #0002}
+.code{font-size:4rem;letter-spacing:.2em;font-weight:900;color:var(--ac)}
+.chips span{display:inline-block;background:var(--ac2);color:#222;border-radius:20px;padding:6px 14px;margin:4px;font-weight:700}
+.ans{font-size:1.4rem;text-align:left}.who{font-size:.9rem;opacity:.7}.pts{color:var(--ac);font-weight:800}
+</style></head><body><div id="app"></div>
+<script>
+const app=document.getElementById('app');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const PFX='odai-party-';
+const PROMPTS=['こんな合コンは嫌だ。どんな？','「ちょっとトイレ行ってくる」の本当の理由は？','コンビニの新商品。その名も？','小学校の校則に新ルールが追加。それは？','桃太郎がお供に断られた理由は？','この社長、絶対ヤバい。なぜ？','「それ、先に言ってよ！」と言いたくなる一言は？','未来の自動販売機にあるボタンは？','ドラえもんが4次元ポケットから出して微妙だった道具は？','寿司屋の大将が突然言い出したこと','探偵が犯人に言った最後の一言は？','旅館の部屋に置いてあって驚いた物は？','地球最後の日にやりたいこと（ちょっとズレてる）','初デートで絶対言ってはいけない一言は？','新しいオリンピック競技、その名は？'];
+const shuffle=a=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a};
+
+function home(){
+  const h=location.hash.replace('#','').toUpperCase();
+  app.innerHTML=`<h1>🎤 大喜利パーティー</h1>
+  <div class="card"><div>みんなで見る画面（PC・TV）で</div><button id="h">部屋を作る</button></div>
+  <div class="card"><div>自分のスマホで参加</div>
+  <input id="c" maxlength="4" placeholder="部屋コード（4文字）" value="${esc(h.slice(0,4))}">
+  <input id="n" maxlength="10" placeholder="ニックネーム">
+  <button id="j">参加する</button></div>`;
+  document.getElementById('h').onclick=host;
+  document.getElementById('j').onclick=()=>{
+    const c=document.getElementById('c').value.trim().toUpperCase(),n=document.getElementById('n').value.trim();
+    if(c.length!==4||!n){alert('コードとニックネームを入れてね');return}
+    player(c,n);
+  };
+}
+
+/* ---------------- HOST ---------------- */
+function host(){
+  const code=Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.random()*24|0]).join('');
+  const peer=new Peer(PFX+code), conns={};
+  let S={phase:'lobby',round:0,total:5,prompt:'',players:{},answers:{},order:[],votes:{},used:[],res:[]};
+  peer.on('error',e=>{if(e.type==='unavailable-id')host();else app.innerHTML='<div class="card">接続エラー: '+esc(e.type)+'<br>再読み込みしてね</div>'});
+  peer.on('open',draw);
+  peer.on('connection',c=>{c.on('data',m=>onMsg(c,m))});
+  const base=location.href.split('#')[0];
+  const ids=()=>Object.keys(S.players);
+  function onMsg(c,m){
+    if(!m||typeof m!=='object')return;
+    if(m.t==='join'&&typeof m.id==='string'){
+      c.pid=m.id;conns[m.id]=c;
+      if(!S.players[m.id])S.players[m.id]={name:String(m.name||'?').slice(0,10),score:0};
+      sync();draw();return;
+    }
+    const id=c.pid;if(!id||!S.players[id])return;
+    if(m.t==='ans'&&S.phase==='answer'){
+      const t=String(m.text||'').trim().slice(0,60);
+      if(t){S.answers[id]=t;sync();draw();if(ids().every(p=>S.answers[p]))setTimeout(()=>S.phase==='answer'&&next(),800)}
+    }
+    if(m.t==='vote'&&S.phase==='vote'){
+      const i=m.i|0;if(S.order[i]===undefined||S.order[i]===id)return;
+      S.votes[id]=i;sync();draw();
+      if(ids().filter(p=>S.order.includes(p)?true:true).every(p=>p in S.votes))setTimeout(()=>S.phase==='vote'&&next(),800);
+    }
+  }
+  function common(){
+    return {phase:S.phase,round:S.round,total:S.total,prompt:S.prompt,
+      choices:S.phase==='vote'?S.order.map(p=>S.answers[p]):[],
+      rank:ids().map(p=>({name:S.players[p].name,score:S.players[p].score})).sort((a,b)=>b.score-a.score)};
+  }
+  function sync(){
+    const c=common();
+    ids().forEach(id=>{const cn=conns[id];if(cn&&cn.open)cn.send({t:'s',s:{...c,
+      answered:!!S.answers[id],voted:id in S.votes,own:S.order.indexOf(id),
+      me:S.players[id].score}})});
+  }
+  function next(){
+    if(S.phase==='lobby'||S.phase==='result'){
+      if(S.phase==='result'&&S.round>=S.total){S.phase='final'}
+      else{
+        const pool=PROMPTS.filter(p=>!S.used.includes(p));
+        S.prompt=pool[Math.random()*pool.length|0]||PROMPTS[0];S.used.push(S.prompt);
+        S.round++;S.answers={};S.votes={};S.order=[];S.phase='answer';
+      }
+    }else if(S.phase==='answer'){
+      S.order=shuffle(Object.keys(S.answers));S.votes={};S.phase='vote';
+    }else if(S.phase==='vote'){
+      const cnt={};Object.values(S.votes).forEach(i=>cnt[i]=(cnt[i]||0)+1);
+      S.res=S.order.map((p,i)=>({text:S.answers[p],name:S.players[p].name,n:cnt[i]||0}));
+      S.order.forEach((p,i)=>S.players[p].score+=(cnt[i]||0)*100);
+      S.res.sort((a,b)=>b.n-a.n);S.phase='result';
+    }else if(S.phase==='final'){
+      ids().forEach(p=>S.players[p].score=0);S.round=0;S.used=[];S.phase='lobby';
+    }
+    sync();draw();
+  }
+  function draw(){
+    const names=ids().map(p=>`<span>${esc(S.players[p].name)}</span>`).join('');
+    const rank=common().rank.map((r,i)=>`<div class="card ans">${i+1}位　${esc(r.name)}　<span class="pts">${r.score}pt</span></div>`).join('');
+    let h='';
+    if(S.phase==='lobby'){
+      h=`<h1>🎤 大喜利パーティー</h1><div>スマホで開いて、コードを入力：</div><div class="code">${code}</div>
+      <div class="who">${esc(base)}#${code}</div>
+      <div class="chips">${names||'（まだ誰もいません）'}</div>
+      <button id="nx" ${ids().length<2?'disabled':''}>スタート（2人〜）</button>`;
+    }else if(S.phase==='answer'){
+      h=`<div class="who">第${S.round}/${S.total}問</div><div class="big">${esc(S.prompt)}</div>
+      <div>スマホで回答してね！ （${Object.keys(S.answers).length}/${ids().length}人 回答済み）</div>
+      <button id="nx" class="sub">回答を締め切る</button>`;
+    }else if(S.phase==='vote'){
+      h=`<div class="who">${esc(S.prompt)}</div><div class="big">一番面白いのは？（自分のには投票できない）</div>`+
+      S.order.map((p,i)=>`<div class="card ans">${esc(S.answers[p])}</div>`).join('')+
+      `<div>${Object.keys(S.votes).length}/${ids().length}人 投票済み</div><button id="nx" class="sub">投票を締め切る</button>`;
+    }else if(S.phase==='result'){
+      h=`<div class="big">結果発表！</div>`+S.res.map(r=>`<div class="card ans">${esc(r.text)}<div class="who">by ${esc(r.name)}　<span class="pts">${r.n}票 +${r.n*100}pt</span></div></div>`).join('')+
+      `<h2>現在のランキング</h2>${rank}<button id="nx">${S.round>=S.total?'最終結果へ':'次のお題へ'}</button>`;
+    }else{
+      h=`<div class="big">🏆 最終結果</div>${rank}<button id="nx">もう一度遊ぶ</button>`;
+    }
+    app.innerHTML=h;const b=document.getElementById('nx');if(b)b.onclick=next;
+  }
+}
+
+/* ---------------- PLAYER ---------------- */
+function player(code,name){
+  let id;try{id=sessionStorage.getItem('odai-id')}catch(e){}
+  if(!id){id=Math.random().toString(36).slice(2,10);try{sessionStorage.setItem('odai-id',id)}catch(e){}}
+  app.innerHTML='<div class="card">接続中…</div>';
+  const peer=new Peer();let conn,st=null,sel=-1;
+  const fail=m=>{app.innerHTML=`<div class="card">${esc(m)}<br><button id="r">戻る</button></div>`;document.getElementById('r').onclick=()=>{peer.destroy();home()}};
+  peer.on('error',e=>fail(e.type==='peer-unavailable'?'その部屋コードは見つかりません':'接続エラー: '+e.type));
+  peer.on('open',()=>{
+    conn=peer.connect(PFX+code,{reliable:true});
+    conn.on('open',()=>conn.send({t:'join',id,name}));
+    conn.on('data',m=>{if(m&&m.t==='s'){if(!st||st.phase!==m.s.phase||st.round!==m.s.round)sel=-1;st=m.s;draw()}});
+    conn.on('close',()=>fail('接続が切れました'));
+  });
+  function draw(){
+    if(!st){return}
+    let h=`<div class="who">${esc(name)}　${st.me}pt</div>`;
+    if(st.phase==='lobby')h+='<div class="big">みんなの参加を待ってます…</div>';
+    else if(st.phase==='answer')h+=`<div class="who">第${st.round}/${st.total}問</div><div class="big">${esc(st.prompt)}</div>
+      <textarea id="t" rows="3" maxlength="60" placeholder="回答を入力（60字まで）"></textarea>
+      <button id="s">${st.answered?'送り直す':'送信'}</button>${st.answered?'<div>✅ 送信済み</div>':''}`;
+    else if(st.phase==='vote'){
+      h+=`<div class="big">一番面白いのに投票！</div>`+st.choices.map((c,i)=>
+        `<button class="sub ans" style="display:block;width:100%;text-align:left" data-i="${i}" ${(i===st.own||st.voted)?'disabled':''}>${esc(c)}${i===st.own?'（自分）':''}</button>`).join('')+
+        (st.voted?'<div>✅ 投票済み</div>':'');
+    }else if(st.phase==='result')h+='<div class="big">画面を見てね👀</div>';
+    else h+='<div class="big">🏆 おつかれさま！画面を見てね</div>';
+    app.innerHTML=h;
+    const s=document.getElementById('s');if(s)s.onclick=()=>{const t=document.getElementById('t').value.trim();if(t)conn.send({t:'ans',text:t})};
+    app.querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>conn.send({t:'vote',i:+b.dataset.i}));
+  }
+}
+home();
+</script></body></html>
